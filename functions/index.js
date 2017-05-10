@@ -8,6 +8,92 @@ const express = require('express');
 const cors = require('cors')({origin: true});
 const router = new express.Router();
 
+exports.sendNotificationOnEventComment 
+    = functions.database.ref('/eventComments/{eventUid}/{eventCommentUid}').onWrite(event => {
+
+        if (event.data.exists()) {
+
+            const eventUid = event.params.eventUid;
+            const eventCommentUid = event.params.eventCommentUid;
+            console.log("event id is", eventUid);
+            console.log("event comment id is", eventCommentUid);
+            console.log("event comment is", event.data.val());            
+            
+            const comments = event.data.val();
+            const commenter = comments.senderName;
+            console.log("commenter is", commenter);
+
+            const payload = {
+                notification : {
+                    title : ""
+                }
+            };            
+
+            const eventPromise = admin.database().ref('/events/' + eventUid).once("value");
+            
+            eventPromise
+                .then(resultSnap => {
+                    if (resultSnap.exists()) {
+                        const eventData = resultSnap.val();
+                        console.log("event is", eventData);            
+                        return eventData;
+                    }
+                })
+                .then(eventData => {
+                    if (eventData) {
+                        payload.notification.title = "New comment on event " 
+                            + eventData.name + " by " + commenter;
+                        console.log("event payload", payload.notification.title);                                        
+                        const invitees = eventData.invitees;
+
+                        const notifyRef = invitees.map(notificationRef);
+
+                        console.log("invitees are ", invitees);                                                                
+                        const fcmTokenPromises = invitees.map(retrieveFcmToken);
+
+                        return Promise.all(fcmTokenPromises).then(results => {
+                                
+                            console.log("token promise result ", results);                                                                                    
+                            const tokens = [];
+                            results.forEach(item =>{
+                                if (item.val()) {
+                                    tokens.push(item.val());
+                                    console.log('token', item.val());
+                                }
+                            });
+                            
+
+                        admin.messaging().sendToDevice(tokens, payload)
+                            .then(response => {
+                                console.log("Successfully sent message:", response);
+                                notifyRef.forEach(notification => {
+                                    let newNotification = notification.push();
+                                    newNotification.set(payload.notification);
+                                });
+                            })
+                            .catch(error => {
+                                console.log("Error sending message:", error);
+                            });
+
+                        })
+                        .catch(err =>{
+                                console.log("error is", err);
+                        });
+                    }
+                });
+        }
+
+    });
+
+    const retrieveFcmToken = Uid => {
+        return admin.database().ref('/users/' + Uid + '/fcmToken').once('value');
+                
+    }
+
+    const notificationRef = uuid => {
+        return admin.database().ref(`/notifications/${uuid}`);
+    }
+
 
 
 
