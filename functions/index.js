@@ -252,6 +252,59 @@ exports.sendMessageNotification = functions.database.ref('/messages/{chatUid}/{m
 });
 
 
+exports.sendNotificationOnGroupAdd = functions.database.ref('/groups/{groupUid}/contacts/{contactUid}').onWrite(event => {
+    if(event.data.exists() && event.data.val()) {
+        const groupUid = event.params.groupUid;
+        const contactUid = event.params.contactUid;
+
+        console.log("contact id: ", contactUid); 
+        const getGroupPromise = admin.database().ref(`/groups/${groupUid}`).once('value');
+        const getContactPromise = admin.database().ref(`/users/${contactUid}/fcmToken`).once('value');
+        const notifyRef = notificationRef(contactUid);
+
+        Promise.all([getGroupPromise, getContactPromise]).then(results => {
+            const groupData = results[0].val();
+            const contactToken = results[1].val();
+
+            console.log(groupData);
+            const groupName = groupData.name;
+            const groupOwner = Object.keys(groupData.admin);
+
+            if(groupData.contacts && groupOwner[0] != contactUid) {
+
+                const payload = {
+                    notification: {
+                        title: 'You have been added to a group',
+                        type: 'NEW_GROUP'
+                    }
+                };
+
+                admin.database().ref(`/users/${groupOwner[0]}`).once('value').then(userSnap => {
+                    const user = userSnap.val();
+
+                    payload.notification.body = `${user.username} added you to ${groupName}`;
+
+                    admin.messaging().sendToDevice(contactToken, payload)
+                        .then(response => {
+                            console.log("Successfully sent message:", response);
+                            let newNotification = notifyRef.push();
+                            newNotification.set(payload.notification);
+                        })
+                        .catch(error => {
+                            console.log("Error sending message:", error);
+                        });
+                }).catch(error => {
+                    console.log(error);
+                });
+            }
+
+        }).catch(error => {
+            console.log(error);
+        });
+
+
+    }
+});
 
 
 
