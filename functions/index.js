@@ -142,6 +142,116 @@ exports.sendNotificationOnNewFollower
         }
     });
 
+exports.sendMessageNotification = functions.database.ref('/messages/{chatUid}/{messageUid}').onWrite(event => {
+    if(event.data.exists() && event.data.val()) {
+        const chatUid = event.params.chatUid;
+        const messageUid = event.params.messageUid;
+
+        console.log("chat id is: " + chatUid);
+        console.log("message id is:" + messageUid);
+        console.log("event data is: ", event.data.val());
+
+        const msg = event.data.val().text;
+        const icon = event.data.val().senderImage; 
+
+        if(event.data.val().sent) {
+            if(chatUid.length > 20) {
+                const idArr = chatUid.split('-');
+                const receiverId = idArr[0] !== event.data.val().senderId ? idArr[0] : idArr[1];
+
+                console.log("recipient is: " + receiverId); 
+
+                const getReceiverTokenPromise = retrieveFcmToken(receiverId);
+                const getSenderPromise = admin.auth().getUser(event.data.val().senderId);
+                const notifyRef = notificationRef(receiverId);
+
+                return Promise.all([getSenderPromise, getReceiverTokenPromise]).then(results => {
+                    const sender = results[0];
+                    const token = results[1];
+
+                    console.log("sender data: ", sender);
+                    console.log("token is : " + token.val());
+
+                    const payload = {
+                        notification : {
+                            title : "You have a new message!",
+                            body: `${sender.displayName} sent you a message: ${msg}.`,
+                            icon: icon,
+                            type: 'NEW_MESSAGE'
+                        }
+                    };
+
+                    admin.messaging().sendToDevice(token.val(), payload)
+                        .then(response => {
+                            console.log("Successfully sent message:", response);
+                            let newNotification = notifyRef.push();
+                            newNotification.set(payload.notification);
+                        })
+                        .catch(error => {
+                            console.log("Error sending message:", error);
+                        });
+                })
+
+            } else {
+                const getGroupPromise = admin.database().ref('/groups/' + chatUid + '/contacts').once('value');
+                const getSenderPromise = admin.auth().getUser(event.data.val().senderId);
+
+                Promise.all([getSenderPromise, getGroupPromise]).then(results => {
+                    const sender = results[0];
+                    console.log(results[1]);
+                    const result = Object.keys(results[1].val());
+                    const contacts = []
+                    result.forEach(id => {
+                        if(id !== event.data.val().senderId) contacts.push(id);
+                    });
+                    console.log(contacts);
+
+                    const payload = {
+                        notification : {
+                            title : "You have a new group message!",
+                            body: `${sender.displayName} sent you a message: ${msg}.`,
+                            icon: icon,
+                            type: 'NEW_GRP_MESSAGE'
+                        }
+                    };
+
+                    const notifyGrpRef = contacts.map(notificationRef);
+                    const recipientToken = contacts.map(retrieveFcmToken);
+                    return Promise.all(recipientToken).then(results => {    
+                        console.log(result);                                                                           
+                        const tokens = [];
+                        results.forEach((item) => {
+                            if (item.val()) {
+                                tokens.push(item.val());
+                                console.log('token', item.val());
+                            }
+                        });
+                        console.log(tokens);
+
+                        admin.messaging().sendToDevice(tokens, payload)
+                            .then(response => {
+                                console.log("Successfully sent message:", response);
+                                notifyGrpRef.forEach(notification => {
+                                    let newNotification = notification.push();
+                                    newNotification.set(payload.notification);
+                                });
+                            })
+                            .catch(error => {
+                                console.log("Error sending message:", error);
+                            });
+                    }).catch(error => {
+                        console.log(error);
+                    });
+                }).catch(error => {
+                    console.log(error);
+                });
+            }
+        }
+
+    }
+});
+
+
 
 
 
