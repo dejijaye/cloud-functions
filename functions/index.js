@@ -94,6 +94,54 @@ exports.sendNotificationOnEventComment
         return admin.database().ref(`/notifications/${uuid}`);
     }
 
+exports.sendNotificationOnNewFollower
+    = functions.database.ref('/users/{userId}/contacts/{contactId}').onWrite(event => {
+        if (event.data.exists() && event.data.val()) {
+
+            const contactId = event.params.contactId;
+            const userId = event.params.userId;
+            console.log("contact id is", contactId);                    
+
+            const contactPromise = admin.auth().getUser(userId);
+
+            const fcmTokenPromises = retrieveFcmToken(contactId);
+
+            const notifyRef = notificationRef(userId);
+
+            return Promise.all([contactPromise, fcmTokenPromises]).then(results => {
+                const contactData = results[0];
+                const tokenData = results[1];
+
+                console.log(contactData);
+                console.log(tokenData.val());
+
+                const payload = {
+                    notification : {
+                        title : "You have a new follower!",
+                        body: `${contactData.displayName} is now following you.`,
+                        icon: contactData.photoURL,
+                        type: 'NEW_FOLLOWER'
+                    }
+                };  
+
+
+                admin.messaging().sendToDevice(tokenData.val(), payload)
+                    .then(response => {
+                        console.log("Successfully sent message:", response);
+                        let newNotification = notifyRef.push();
+                        newNotification.set(payload.notification);
+                    })
+                    .catch(error => {
+                        console.log("Error sending message:", error);
+                    });
+
+
+            }).catch(error => {
+                console.log(error);
+            });
+        }
+    });
+
 
 
 
