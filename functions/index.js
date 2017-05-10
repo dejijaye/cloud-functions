@@ -306,6 +306,60 @@ exports.sendNotificationOnGroupAdd = functions.database.ref('/groups/{groupUid}/
     }
 });
 
+exports.sendNotificationOnEventAdd = functions.database.ref('/users/{userUid}/subscribedEvents/{eventUid}').onWrite(event => {
+    if(event.data.exists() && event.data.val()) {
+        const userUid = event.params.userUid;
+        const eventUid = event.params.eventUid;
+        console.log("user id: ", userUid);
+        console.log("event id: ", eventUid);
+
+        const getGuestPromise = admin.auth().getUser(userUid);
+        const getEventPromise = admin.database().ref(`/events/${eventUid}`).once('value');
+
+        Promise.all([getGuestPromise, getEventPromise]).then(results => {
+            const guestData = results[0];
+            const eventData = results[1].val();
+
+            const eventName = eventData.name;
+            const eventOwner = eventData.creatorId;
+            const notifyRef = notificationRef(eventOwner);
+            console.log("event data: ", eventData);
+            console.log("guest data: ", guestData);
+
+            admin.database().ref(`/users/${eventOwner}/fcmToken`).once('value')
+                .then(userSnap => {
+                    const token = userSnap.val();
+                    console.log("token is ", token);
+
+                    const payload = {
+                        notification: {
+                            title: 'Someone want to attend your event',
+                            body: `${guestData.displayName} joined your event ${eventName}`,
+                            type: 'NEW_INVITEE'
+                        }
+                    };
+
+                    admin.messaging().sendToDevice(token, payload)
+                        .then(response => {
+                            console.log("Successfully sent message:", response);
+                            let newNotification = notifyRef.push();
+                            newNotification.set(payload.notification);
+                        })
+                        .catch(error => {
+                            console.log("Error sending message:", error);
+                        });
+                }).catch(error => {
+                    console.log(error);
+                });
+
+
+        }).catch(error => {
+            console.log(error);
+        });
+
+    }
+
+})
 
 
 router.use(cors);
